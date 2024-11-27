@@ -9,7 +9,13 @@ namespace gem5
 
 class HelloSimObject: public SimObject
 {
+  private:
+    int remainingHellosToPrintByEvent;
+
+    EventFunctionWrapper nextHelloEvent;
+    void processNextHelloEvent();
   public:
+    virtual void startup() override;
     HelloSimObject(const HelloSimObjectParams& params);
 };
 
