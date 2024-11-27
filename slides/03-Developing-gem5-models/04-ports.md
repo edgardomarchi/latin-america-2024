@@ -221,8 +221,8 @@ Now let's go ahead and create a `SimObject` declaration file for `SecureMemory`.
 
 ```sh
 cd /workspaces/2024/gem5/src
-mkdir -p bootcamp/secure_memory
-cd bootcamp/secure_memory
+mkdir -p bootcamp/insepctor_gadget
+cd bootcamp/insepctor_gadget
 touch SecureMemory.py
 ```
 
@@ -358,7 +358,7 @@ DebugFlag("SecureMemory")
 
 ## SecureMemory: C++ Files
 
-Now, let's go ahead and create a header and source file for `SecureMemory` in `gem5/src/bootcamp/secure_memory`. Remember to make sure the path to your header file matches that of what you specified in `cxx_header` in `SecureMemory.py` and the path for your source file matches that of what you specified in `SConscript`. Run the following commands from within our `secure_memory` directory:
+Now, let's go ahead and create a header and source file for `SecureMemory` in `gem5/src/bootcamp/insepctor_gadget`. Remember to make sure the path to your header file matches that of what you specified in `cxx_header` in `SecureMemory.py` and the path for your source file matches that of what you specified in `SConscript`. Run the following commands from within our `insepctor_gadget` directory:
 
 ```sh
 touch secure_memory.hh
@@ -1122,7 +1122,7 @@ SecureMemory::MemSidePort::recvReqRetry()
 
 ## SecureMemory::recvReqRetry
 
-Let's go ahead and declare and define `recvReqRetry` in the `public` scope of `SecureMemory`. Add the following lines to `secure_memory.hh` to declare `SecureMemory::recvReqRetry`:
+Let's go ahead and declare and define `recvReqRetry` in the `public` scope of `SecureMemory`. Add the following lines to `secure_memory.hh` to declare `InpsectorGadget::recvReqRetry`:
 
 ```cpp
   private:
@@ -1208,7 +1208,7 @@ void SecureMemory::processNextRespRetryEvent();
 void SecureMemory::scheduleNextRespRetryEvent(Tick when);
 ```
 
-To find the definition for all these functions please look at the [complete version](../../materials/03-Developing-gem5-models/04-ports/step-1/src/bootcamp/inspector-gadget/inspector-gadget.cc) of `inspector_gadget.cc`. You can search for `Too-Much-Code` to find these functions. (Note that you'll need to change the name of the class to `SecureMemory`).
+To find the definition for all these functions please look at the [complete version](../../materials/03-Developing-gem5-models/04-ports/step-1/src/bootcamp/secure_memory/secure_memory.cc) of `secure_memory.cc`. You can search for `Too-Much-Code` to find these functions.
 
 ---
 
@@ -1237,7 +1237,7 @@ SecureMemory::SecureMemory(const SecureMemoryParams& params):
 
 ## SimObject::init
 
-Last step before compilation is to define the `init` function. Since `SecureMemory` is a `Responder` object, the convention is to let `peer` ports know that they can ask for their address range when the ranges become known. `init` is a `virtual` and `public` function from `SimObject`. Let's go ahead and declare it to override it. To do this, add the following declaration to the `public` scope of `SecureMemory` in `secure_memory.hh`.
+Last step before compilation is to define the `init` function. Since `SecureMemory` is a `Responder` object, the convention is to let `peer` ports know that they can ask for their address range when the ranges become known. `init` is a `virtual` and `public` function from `SimObject`. Let's go ahead and declare it to override it. To do this, add the following declaration to the `public` scope of `SecureMemory` in `insepctor_gadget.hh`.
 
 ```cpp
 virtual void init() override;
@@ -1407,7 +1407,7 @@ In this step, we see how to add statistics to our `SimObjects` so that we can me
 
 ## Statistics:: Header File
 
-gem5 has its own internal classes for measuring statistics (stats for short). Let's go ahead and include the header files for them in `src/bootcamp/secure_memory.hh`
+gem5 has its own internal classes for measuring statistics (stats for short). Let's go ahead and include the header files for them in `src/bootcamp/insepctor_gadget.hh`
 
 ```cpp
 #include "base/statistics.hh"
@@ -1416,7 +1416,7 @@ gem5 has its own internal classes for measuring statistics (stats for short). Le
 
 gem5 stats have multiple types, each useful for measuring specific types of data. We will look at using `statistics::Scalar` stats since all the things we want to measure are scalars.
 
-Let's go ahead a declare a new `struct` called `SecureMemoryStats` inside the `private` scope of `SecureMemory` and also declare an instance of it. It will inherit from `statistics::Group`. Add the following lines to `src/bootcamp/secure_memory.hh` to do this.
+Let's go ahead a declare a new `struct` called `SecureMemoryStats` inside the `private` scope of `SecureMemory` and also declare an instance of it. It will inherit from `statistics::Group`. Add the following lines to `src/bootcamp/insepctor_gadget.hh` to do this.
 
 ```cpp
   private:
