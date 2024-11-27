@@ -12,7 +12,8 @@ namespace gem5
 HelloSimObject::HelloSimObject(const HelloSimObjectParams& params):
     SimObject(params),
     remainingHellosToPrintByEvent(params.num_hellos),
-    nextHelloEvent([this](){ processNextHelloEvent(); }, name() + ".nextHelloEvent")
+    nextHelloEvent([this](){ processNextHelloEvent(); }, name() + ".nextHelloEvent"),
+    goodByeObject(params.goodbye_object)
 {
     fatal_if(params.num_hellos <= 0, "num_hellos should be positive!");
     for (int i = 0; i < params.num_hellos; i++) {
@@ -23,12 +24,12 @@ HelloSimObject::HelloSimObject(const HelloSimObjectParams& params):
 
 void HelloSimObject::processNextHelloEvent()
 {
-    std::cout << "tick: " << curTick() << ", Hello from ";
-    std::cout << "HelloSimObject::processNextHelloEvent!";
-    std::cout << std::endl;
+    std::cout << "tick: " << curTick() << ", Hello from HelloSimObject::processNextHelloEvent!" << std::endl;
     remainingHellosToPrintByEvent--;
     if (remainingHellosToPrintByEvent > 0) {
         schedule(nextHelloEvent, curTick() + 500);
+    } else {
+        goodByeObject->sayGoodBye();
     }
 }
 
