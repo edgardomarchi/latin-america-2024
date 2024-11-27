@@ -8,7 +8,10 @@ namespace gem5
 HelloSimObject::HelloSimObject(const HelloSimObjectParams& params):
     SimObject(params)
 {
-    std::cout << "Hello from HelloSimObject's constructor!" << std::endl;
+    for (int i = 0; i < params.num_hellos; i++) {
+        std::cout << "i: " << i << ", Hello from HelloSimObject's constructor!" << std::endl;
+    }
 }
+
 
 } // namespace gem5
