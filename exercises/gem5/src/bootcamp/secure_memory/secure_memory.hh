@@ -1,6 +1,11 @@
 #ifndef __BOOTCAMP_SECURE_MEMORY_SECURE_MEMORY_HH__
 #define __BOOTCAMP_SECURE_MEMORY_SECURE_MEMORY_HH__
 
+#define ARITY 8
+#define BLOCK_SIZE 64
+#define HMAC_SIZE 8
+#define PAGE_SIZE 4096
+
 #include <queue>
 
 #include "base/statistics.hh"
@@ -23,6 +28,7 @@ class SecureMemory : public ClockedObject
     class MemSidePort: public RequestPort
     {
       private:
+
         SecureMemory* owner;
         bool needToSendRetry;
         PacketPtr blockedPacket;
@@ -116,7 +122,6 @@ class SecureMemory : public ClockedObject
 
     void recvReqRetry();
 
-    // Response Path
     TimedQueue<PacketPtr> responseBuffer;
 
     EventFunctionWrapper nextRespSendEvent;
@@ -138,8 +143,31 @@ class SecureMemory : public ClockedObject
     };
     SecureMemoryStats stats;
 
+    std::deque<uint64_t> integrity_levels;
+
+    // variables to help refer to certain metadata types
+    int root_level = 1;
+    int hmac_level = 0;
+    int data_level; // set after object construction in setup()
+    int counter_level; // set after object construction in setup()
+    // structures to know what is currently pending authentication, etc
+    std::set<uint64_t> pending_tree_authentication;
+    // a bit of a misnomer, we'll use this for hmacs so all tree nodes
+    // can go to pending_authentications
+    std::set<uint64_t> pending_hmac;
+    // fetched but not verified OR writes waiting for path to update
+    std::set<PacketPtr> pending_untrusted_packets;
+    // secure memory functions
+    uint64_t getHmacAddr(uint64_t child_addr); // fetch address of the hmac for somed data
+    uint64_t getParentAddr(uint64_t child_addr); // fetch parent node in the tree
+    void verifyChildren(PacketPtr parent); // remove children from pending untrusted once trusted
+    bool handleResponse(PacketPtr pkt);
+    bool handleRequest(PacketPtr pkt);
+
+
   public:
     SecureMemory(const SecureMemoryParams& params);
+    void startup() override;
     virtual Port& getPort(const std::string& if_name, PortID idxInvalidPortID) override;
 
     AddrRangeList getAddrRanges() const;

@@ -23,11 +23,43 @@ SecureMemory::SecureMemory(const SecureMemoryParams& params):
     stats(this)
 {}
 
-void
-SecureMemory::init()
-{
-    cpuSidePort.sendRangeChange();
-}
+    void SecureMemory::init()
+    {
+        cpuSidePort.sendRangeChange();
+    }
+
+    void
+    SecureMemory::startup()
+    {
+        // setup address range for secure memory metadata
+        AddrRangeList ranges = memSidePort.getAddrRanges();
+        assert(ranges.size() == 1);
+
+        uint64_t start = ranges.front().start();
+        uint64_t end = ranges.front().end();
+
+        uint64_t hmac_bytes = ((end - start) / BLOCK_SIZE) * HMAC_SIZE;
+        uint64_t counter_bytes = ((end - start) / PAGE_SIZE) * BLOCK_SIZE;
+
+        // initialize integrity_levels
+        uint64_t tree_offset = end + hmac_bytes;
+
+        integrity_levels.push_front(start); // where does data start?
+        integrity_levels.push_front(tree_offset); // where does tree start?
+
+        uint64_t bytes_on_level = counter_bytes;
+        do {
+            integrity_levels.push_front(tree_offset + bytes_on_level); // level starting address
+            tree_offset += bytes_on_level;
+            bytes_on_level /= ARITY;
+        } while (bytes_on_level > 1);
+
+        integrity_levels.push_front(end); // hmac start
+        integrity_levels.shrink_to_fit();
+
+        data_level = integrity_levels.size() - 1;
+        counter_level = data_level - 1;
+    }
 
     Port& SecureMemory::getPort(const std::string &if_name, PortID idx)
     {
@@ -82,23 +114,17 @@ SecureMemory::init()
         return clockPeriod() + memSidePort.sendAtomic(pkt);
     }
 
-    // bool SecureMemory::recvTimingReq(PacketPtr pkt)
-    // {
-    //     if (buffer.size() >= bufferEntries) {
-    //         return false;
-    //     }
-    //     buffer.push(pkt, curTick());
-    //     return true;
-    // }
-
     bool SecureMemory::recvTimingReq(PacketPtr pkt)
     {
+        return handleRequest(pkt);
+        /* to handle request
         if (buffer.size() >= bufferEntries) {
             return false;
         }
         buffer.push(pkt, curTick());
         scheduleNextReqSendEvent(nextCycle());
         return true;
+        */
     }
 
     void SecureMemory::MemSidePort::sendPacket(PacketPtr pkt)
@@ -117,15 +143,18 @@ SecureMemory::init()
         panic_if(memSidePort.blocked(), "Should never try to send if blocked!");
         panic_if(!buffer.hasReady(curTick()), "Should never try to send if no ready packets!");
 
+        stats.numRequestsFwded++;
+        stats.totalbufferLatency += curTick() - buffer.frontTime();
+
         PacketPtr pkt = buffer.front();
-        memSidePort.sendPacket(pkt);
+
+        handleRequest(pkt);
+
+        //memSidePort.sendPacket(pkt);
         buffer.pop();
 
         scheduleNextReqRetryEvent(nextCycle());
         scheduleNextReqSendEvent(nextCycle());
-
-        stats.numRequestsFwded++;
-        stats.totalbufferLatency += curTick() - buffer.frontTime();
     }
 
     void SecureMemory::processNextReqRetryEvent()
@@ -223,12 +252,15 @@ SecureMemory::MemSidePort::recvTimingResp(PacketPtr pkt)
 bool
 SecureMemory::recvTimingResp(PacketPtr pkt)
 {
+    return handleResponse(pkt);
+    /* to halndleResponse
     if (responseBuffer.size() >= responseBufferEntries) {
         return false;
     }
     responseBuffer.push(pkt, curTick());
     scheduleNextRespSendEvent(nextCycle());
     return true;
+    */
 }
 
 // Too-Much-Code
@@ -238,8 +270,8 @@ SecureMemory::processNextRespSendEvent()
     panic_if(cpuSidePort.blocked(), "Should never try to send if blocked!");
     panic_if(!responseBuffer.hasReady(curTick()), "Should never try to send if no ready packets!");
 
-    //stats.numResponsesFwded++;
-    //stats.totalResponseBufferLatency += curTick() - responseBuffer.frontTime();
+    stats.numResponsesFwded++;
+    stats.totalResponseBufferLatency += curTick() - responseBuffer.frontTime();
 
     PacketPtr pkt = responseBuffer.front();
     cpuSidePort.sendPacket(pkt);
@@ -248,8 +280,6 @@ SecureMemory::processNextRespSendEvent()
     scheduleNextRespRetryEvent(nextCycle());
     scheduleNextRespSendEvent(nextCycle());
 
-    stats.numResponsesFwded++;
-    stats.totalResponseBufferLatency += curTick() - responseBuffer.frontTime();
 }
 
 // Too-Much-Code
@@ -290,6 +320,195 @@ SecureMemory::SecureMemoryStats::SecureMemoryStats(SecureMemory* secure_memory):
     ADD_STAT(totalResponseBufferLatency, statistics::units::Tick::get(), "Total response buffer latency."),
     ADD_STAT(numResponsesFwded, statistics::units::Count::get(), "Number of responses forwarded.")
 {}
+
+uint64_t
+SecureMemory::getHmacAddr(uint64_t child_addr)
+{
+    AddrRangeList ranges = memSidePort.getAddrRanges();
+    assert(ranges.size() == 1);
+
+    uint64_t start = ranges.front().start();
+    uint64_t end = ranges.front().end();
+
+    if (!(child_addr >= start && child_addr < end)) {
+        // this is a check for something that isn't metadata
+        return (uint64_t) -1;
+    }
+
+    // raw location, not word aligned
+    uint64_t hmac_addr = integrity_levels[hmac_level] + ((child_addr / BLOCK_SIZE) * HMAC_SIZE);
+
+    // word aligned
+    return hmac_addr - (hmac_addr % BLOCK_SIZE);
+}
+
+uint64_t
+SecureMemory::getParentAddr(uint64_t child_addr)
+{
+    AddrRangeList ranges = memSidePort.getAddrRanges();
+    assert(ranges.size() == 1);
+
+    uint64_t start = ranges.front().start();
+    uint64_t end = ranges.front().end();
+
+    if (child_addr >= start && child_addr < end) {
+        // child is data, get the counter
+        return integrity_levels[counter_level] + ((child_addr / PAGE_SIZE) * BLOCK_SIZE);
+    }
+
+    for (int i = counter_level; i > root_level; i--) {
+        if (child_addr >= integrity_levels[i] && child_addr < integrity_levels[i - 1]) {
+            // we belong to this level
+            uint64_t index_in_level = (child_addr - integrity_levels[i]) / BLOCK_SIZE;
+            return integrity_levels[i - 1] + ((index_in_level / ARITY) * BLOCK_SIZE);
+        }
+    }
+
+    assert(child_addr == integrity_levels[root_level]);
+    // assert(false); // we shouldn't ever get here
+    return (uint64_t) -1;
+}
+
+bool
+SecureMemory::handleRequest(PacketPtr pkt)
+{
+    std::vector<uint64_t> metadata_addrs;
+    uint64_t child_addr = pkt->getAddr();
+
+    uint64_t hmac_addr = getHmacAddr(child_addr);
+    metadata_addrs.push_back(hmac_addr);
+    do {
+        metadata_addrs.push_back(getParentAddr(child_addr));
+        child_addr = metadata_addrs.back();
+    } while (child_addr != integrity_levels[root_level]);
+
+    pending_tree_authentication.insert(pkt->getAddr());
+    pending_hmac.insert(pkt->getAddr());
+
+    if (pkt->isWrite() && pkt->hasData()) {
+        pending_untrusted_packets.insert(pkt);
+    } else if (pkt->isRead()) {
+        //memSidePort.sendPacket(pkt);
+        if (buffer.size() >= bufferEntries) {
+            return false;
+        }
+        buffer.push(pkt, curTick());
+        scheduleNextReqSendEvent(nextCycle());
+    }
+
+    for (uint64_t addr: metadata_addrs) {
+        RequestPtr req = std::make_shared<Request>(addr, BLOCK_SIZE, 0, 0);
+        PacketPtr metadata_pkt = Packet::createRead(req);
+        metadata_pkt->allocate();
+
+        if (addr != hmac_addr) {
+            // note: we can't save the packet itself because it may be deleted
+            // by the memory device :-)
+            pending_tree_authentication.insert(addr);
+        }
+
+        // memSidePort.sendPacket(metadata_pkt);
+        if (buffer.size() >= bufferEntries) {
+            return false;
+        }
+        buffer.push(metadata_pkt, curTick());
+        scheduleNextReqSendEvent(nextCycle());
+    }
+
+    return true;
+}
+
+void
+SecureMemory::verifyChildren(PacketPtr parent)
+{
+    if (parent->getAddr() < integrity_levels[hmac_level]) {
+        bool awaiting_hmac = false;
+        for (uint64_t addr: pending_hmac) {
+            if (addr == parent->getAddr()) {
+                awaiting_hmac = true;
+            }
+        }
+
+        if (!awaiting_hmac) {
+            // we are authenticated!
+            pending_tree_authentication.erase(parent->getAddr());
+
+            if (parent->isWrite()) {
+                // also send writes for all of the metadata
+                memSidePort.sendPacket(parent);
+            } else {
+                cpuSidePort.sendPacket(parent);
+            }
+        }
+
+        return;
+    }
+
+    std::vector<PacketPtr> to_call_verify;
+
+    // verify all packets that have returned and are waiting
+    for (auto it = pending_untrusted_packets.begin();
+              it != pending_untrusted_packets.end(); ) {
+        if (getParentAddr((*it)->getAddr()) == parent->getAddr()) {
+            // someone was untrusted and waiting for us
+            to_call_verify.push_back(*it);
+            it = pending_untrusted_packets.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // all done, free/remove node
+    delete parent;
+
+    for (PacketPtr pkt: to_call_verify) {
+        verifyChildren(pkt);
+    }
+}
+
+bool
+SecureMemory::handleResponse(PacketPtr pkt)
+{
+    if (pkt->isWrite() && pkt->getAddr() < integrity_levels[hmac_level]) {
+        //cpuSidePort.sendPacket(pkt);
+        if (responseBuffer.size() >= responseBufferEntries) {
+            return false;
+        }
+        responseBuffer.push(pkt, curTick());
+        scheduleNextRespSendEvent(nextCycle());
+    }
+
+    if (pkt->getAddr() >= integrity_levels[hmac_level] && pkt->getAddr() < integrity_levels[counter_level]) {
+        // authenticate the data
+        for (auto it = pending_hmac.begin();
+                  it != pending_hmac.end(); ) {
+            if (getHmacAddr(*it) == pkt->getAddr()) {
+                it = pending_hmac.erase(it);
+                // using simple memory, so we can assume hmac
+                // will always be verified first and not worry
+                // about the case where cipher happens before verification
+            } else {
+                ++it;
+            }
+        }
+
+        delete pkt;
+        return true;
+    }
+
+    // we are no longer in memory
+    pending_tree_authentication.erase(pkt->getAddr());
+    if (pkt->getAddr() == integrity_levels[root_level]) {
+        // value is trusted, authenticate children
+        verifyChildren(pkt);
+    } else {
+        // move from pending address to pending metadata stored
+        // in on-chip buffer for authentication
+        pending_untrusted_packets.insert(pkt);
+    }
+
+    return true;
+}
 
 
 }
