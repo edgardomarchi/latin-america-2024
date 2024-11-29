@@ -9,7 +9,7 @@ from gem5.isas import ISA
 from gem5.resources.resource import obtain_resource
 from gem5.simulate.simulator import Simulator
 
-processor = SimpleProcessor(cpu_type=CPUTypes.TIMING, isa=ISA.ARM, num_cores=1)
+processor = SimpleProcessor(cpu_type=CPUTypes.TIMING, isa=ISA.X86, num_cores=1)
 cache = MESITwoLevelCacheHierarchy(l1d_size="32KiB",
                                    l1d_assoc=8,
                                    l1i_size="32KiB",
@@ -20,7 +20,12 @@ cache = MESITwoLevelCacheHierarchy(l1d_size="32KiB",
                                    )
 memory = SingleChannelDDR4_2400()
 
-board = SimpleBoard(clk_freq='3GHz',processor=processor, memory=memory, cache_hierarchy=cache)
+board = SimpleBoard(
+    clk_freq='3GHz',
+    processor=processor,
+    memory=memory,
+    cache_hierarchy=cache
+    )
 
 workload = obtain_resource("arm-gapbs-bfs-run")
 board.set_workload(workload)
